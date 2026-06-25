@@ -36,9 +36,42 @@ export async function runTauriBuild(
   }
 }
 
-/** The bundle output root for a (possibly cross-compiled) target. */
-export function bundleRootFor(root: string, target?: string): string {
-  return joinPath(root, 'src-tauri', 'target', target ?? '', 'release', 'bundle');
+/**
+ * Resolve cargo's REAL target directory. Honors `CARGO_TARGET_DIR` and a
+ * `[build] target-dir` in any .cargo/config.toml via `cargo metadata` — without
+ * this, a box that redirects builds (e.g. ~/.cargo-target) leaves bundles where
+ * a hardcoded `<root>/src-tauri/target` never finds them (only stale leftovers),
+ * which is a latent bug in the old release-local.sh too.
+ */
+export async function resolveTargetDir(
+  ports: ReleasePorts,
+  cfg: TauriReleaseConfig,
+): Promise<string> {
+  if (cfg.cargoTargetDir) return cfg.cargoTargetDir;
+  const res = await ports.exec.run(
+    'cargo',
+    ['metadata', '--no-deps', '--format-version', '1'],
+    { cwd: joinPath(cfg.root, 'src-tauri') },
+  );
+  if (res.code === 0) {
+    try {
+      const meta = JSON.parse(res.stdout) as { target_directory?: unknown };
+      if (typeof meta.target_directory === 'string' && meta.target_directory) {
+        return meta.target_directory;
+      }
+    } catch {
+      /* fall through to default */
+    }
+  }
+  ports.log.warn(
+    'cargo metadata gave no target_directory; defaulting to <root>/src-tauri/target',
+  );
+  return joinPath(cfg.root, 'src-tauri', 'target');
+}
+
+/** The bundle output root under a resolved cargo target dir (+ optional triple). */
+export function bundleRootFor(targetDir: string, target?: string): string {
+  return joinPath(targetDir, target ?? '', 'release', 'bundle');
 }
 
 /**

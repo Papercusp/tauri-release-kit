@@ -4,6 +4,7 @@ import { defaultClassifyArtifact } from '../artifacts.js';
 import {
   bundleRootFor,
   collectArtifacts,
+  resolveTargetDir,
   runTauriBuild,
 } from '../tauri-build.js';
 
@@ -16,7 +17,8 @@ export function makeLinuxDriver(
     key,
     async build(cfg, ports) {
       await runTauriBuild(ports, cfg, target);
-      const bundleRoot = bundleRootFor(cfg.root, target);
+      const targetDir = await resolveTargetDir(ports, cfg);
+      const bundleRoot = bundleRootFor(targetDir, target);
       const classify = cfg.classifyArtifact ?? defaultClassifyArtifact;
       return collectArtifacts(ports, bundleRoot, subdirs, classify);
     },

@@ -136,6 +136,13 @@ export interface TauriReleaseConfig {
   classifyArtifact?: (path: string) => PlatformKey | null;
   /** Per-target VM frame config (Mac/Windows). */
   vm?: Partial<Record<TargetKey, VmConfig>>;
+  /**
+   * Explicit cargo target directory override. Normally left unset — the Linux
+   * driver resolves it via `cargo metadata` so it honors CARGO_TARGET_DIR and a
+   * `[build] target-dir` in any .cargo/config.toml (e.g. this dev box redirects
+   * all builds to ~/.cargo-target). Set only to force a specific dir.
+   */
+  cargoTargetDir?: string;
 }
 
 // ── Artifacts + driver registry ──────────────────────────────────────────────
