@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { resolveTargetDir, bundleRootFor } from './tauri-build.js';
-import type { ExecPort, ReleasePorts, TauriReleaseConfig } from './types.js';
+import { resolveTargetDir, bundleRootFor, collectArtifacts, isArtifactFile } from './tauri-build.js';
+import type { ExecPort, FsPort, ReleasePorts, TauriReleaseConfig } from './types.js';
 
 function cfg(extra: Partial<TauriReleaseConfig> = {}): TauriReleaseConfig {
   return {
@@ -61,5 +61,47 @@ describe('resolveTargetDir (the ~/.cargo-target redirect bug)', () => {
       },
     };
     expect(await resolveTargetDir(ports(exec), cfg())).toBe('/app/src-tauri/target');
+  });
+});
+
+describe('isArtifactFile', () => {
+  it('accepts installer files; rejects staging dirs + sigs', () => {
+    expect(isArtifactFile('Papercusp_0.0.2_amd64.deb')).toBe(true);
+    expect(isArtifactFile('Papercusp_0.0.2_amd64.AppImage')).toBe(true);
+    expect(isArtifactFile('App_x64-setup.exe')).toBe(true);
+    expect(isArtifactFile('Papercusp.AppDir')).toBe(false); // dir
+    expect(isArtifactFile('Papercusp_0.0.2_amd64')).toBe(false); // deb staging dir
+    expect(isArtifactFile('Foo.AppImage.sig')).toBe(false); // sig rides via sigPath
+  });
+});
+
+describe('collectArtifacts filtering (the dir + stale-version bug from the live build)', () => {
+  const fsWith = (entries: Record<string, string[]>): FsPort => ({
+    readText: async () => '',
+    writeText: async () => {},
+    exists: async () => true,
+    readDir: async (dir) => entries[dir] ?? [],
+  });
+  const portsWith = (f: FsPort): ReleasePorts => ({
+    exec: { async run() { return { code: 0, stdout: '', stderr: '' }; } },
+    fs: f,
+    log: { info: () => {}, warn: () => {} },
+    env: () => undefined,
+    now: () => 'T',
+  });
+
+  it('drops staging dirs + stale older-version files, keeps the current version', async () => {
+    const f = fsWith({
+      '/b/appimage': ['Papercusp_0.0.2_amd64.AppImage', 'Papercusp.AppDir', 'Papercusp_0.0.1_amd64.AppImage'],
+      '/b/deb': ['Papercusp_0.0.2_amd64.deb', 'Papercusp_0.0.2_amd64'],
+      '/b/rpm': ['Papercusp-0.0.2-1.x86_64.rpm', 'Papercusp-0.0.2-1.x86_64'],
+    });
+    const arts = await collectArtifacts(portsWith(f), '/b', ['appimage', 'deb', 'rpm'], undefined, { version: '0.0.2' });
+    expect(arts.map((a) => a.name).sort()).toEqual([
+      'Papercusp-0.0.2-1.x86_64.rpm',
+      'Papercusp_0.0.2_amd64.AppImage',
+      'Papercusp_0.0.2_amd64.deb',
+    ]);
+    expect(arts.find((a) => a.name.endsWith('.AppImage'))!.platformKey).toBe('linux-x86_64');
   });
 });

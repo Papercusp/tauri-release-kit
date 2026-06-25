@@ -20,7 +20,7 @@ export function makeLinuxDriver(
       const targetDir = await resolveTargetDir(ports, cfg);
       const bundleRoot = bundleRootFor(targetDir, target);
       const classify = cfg.classifyArtifact ?? defaultClassifyArtifact;
-      return collectArtifacts(ports, bundleRoot, subdirs, classify);
+      return collectArtifacts(ports, bundleRoot, subdirs, classify, { version: cfg.version });
     },
   };
 }

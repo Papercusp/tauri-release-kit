@@ -74,23 +74,39 @@ export function bundleRootFor(targetDir: string, target?: string): string {
   return joinPath(targetDir, target ?? '', 'release', 'bundle');
 }
 
+/** Recognized installer/bundle artifact extensions (lowercase, no dot-sig). */
+export const ARTIFACT_EXTS = ['.deb', '.rpm', '.appimage', '.msi', '.exe', '.dmg'] as const;
+
+/** True for a real artifact FILE — excludes staging dirs (AppDir, *_amd64/) + .sig. */
+export function isArtifactFile(name: string): boolean {
+  const lower = name.toLowerCase();
+  return ARTIFACT_EXTS.some((ext) => lower.endsWith(ext));
+}
+
 /**
  * List artifacts under the given bundle subdirs (deb, appimage, msi, …),
- * classifying each and attaching its `.sig`. `.sig` files themselves are
- * skipped (they ride along with their artifact via sigPath).
+ * classifying each and attaching its `.sig`. Skips:
+ *  - directories (the deb/rpm staging dirs, `Papercusp.AppDir`) — a bundle dir
+ *    holds both the artifact file AND its expanded tree;
+ *  - `.sig` files (they ride along via sigPath);
+ *  - stale cross-version artifacts when `version` is given — the shared cargo
+ *    target-dir accumulates across cuts, and an unscoped sweep once shipped a
+ *    stale older-version .deb (release-local.sh L178 learned the same lesson).
  */
 export async function collectArtifacts(
   ports: ReleasePorts,
   bundleRoot: string,
   subdirs: string[],
   classify: (p: string) => PlatformKey | null = defaultClassifyArtifact,
+  opts: { version?: string } = {},
 ): Promise<Artifact[]> {
   const out: Artifact[] = [];
   for (const sub of subdirs) {
     const dir = joinPath(bundleRoot, sub);
     const names = await ports.fs.readDir(dir);
     for (const name of names) {
-      if (name.endsWith('.sig')) continue;
+      if (!isArtifactFile(name)) continue;
+      if (opts.version && !name.includes(opts.version)) continue;
       out.push(toArtifact(joinPath(dir, name), classify));
     }
   }
