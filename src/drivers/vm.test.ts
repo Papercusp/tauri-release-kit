@@ -10,7 +10,11 @@ const vm: VmConfig = {
   buildDir: 'papercup-build-release',
 };
 
-function ports(calls: string[][], stdoutFor: (remote: string) => { code: number; stdout: string }): ReleasePorts {
+function ports(
+  calls: string[][],
+  stdoutFor: (remote: string) => { code: number; stdout: string },
+  mkdirCalls: string[] = [],
+): ReleasePorts {
   const exec: ExecPort = {
     async run(cmd, args): Promise<ExecResult> {
       calls.push([cmd, ...args]);
@@ -22,7 +26,19 @@ function ports(calls: string[][], stdoutFor: (remote: string) => { code: number;
       return { code: 0, stdout: '', stderr: '' };
     },
   };
-  return { exec, fs: {} as never, log: { info: () => {}, warn: () => {} }, env: () => undefined, now: () => 'T' };
+  // EI-7474: vm.ts calls ports.fs.mkdir(recipe.collectDir) before the download
+  // loop — a stub-less `fs` here throws "ports.fs.mkdir is not a function"
+  // (the exact regression this fix introduced until the fake was updated).
+  const fs: ReleasePorts['fs'] = {
+    readText: async () => '',
+    writeText: async () => {},
+    exists: async () => false,
+    readDir: async () => [],
+    mkdir: async (dir: string) => {
+      mkdirCalls.push(dir);
+    },
+  };
+  return { exec, fs, log: { info: () => {}, warn: () => {} }, env: () => undefined, now: () => 'T' };
 }
 
 function cfg(): TauriReleaseConfig {
@@ -65,12 +81,17 @@ describe('makeVmBuildDriver — pack-ship-build-collect (Windows shape)', () => 
     };
     const driver = makeVmBuildDriver('windows-x86_64', () => recipe);
 
-    const p = ports(calls, (remote) => {
-      if (remote === 'echo VM-OK') return { code: 0, stdout: 'VM-OK' };
-      if (remote === 'BUILD') return { code: 1, stdout: 'Finished 1 bundle at: x\nA public key has been found, but no private key' };
-      if (remote === 'LIST') return { code: 0, stdout: 'Papercusp_0.0.2_x64-setup.exe\r\n' };
-      return { code: 0, stdout: '' };
-    });
+    const mkdirCalls: string[] = [];
+    const p = ports(
+      calls,
+      (remote) => {
+        if (remote === 'echo VM-OK') return { code: 0, stdout: 'VM-OK' };
+        if (remote === 'BUILD') return { code: 1, stdout: 'Finished 1 bundle at: x\nA public key has been found, but no private key' };
+        if (remote === 'LIST') return { code: 0, stdout: 'Papercusp_0.0.2_x64-setup.exe\r\n' };
+        return { code: 0, stdout: '' };
+      },
+      mkdirCalls,
+    );
 
     const artifacts = await driver.build(cfg(), p);
 
@@ -79,6 +100,8 @@ describe('makeVmBuildDriver — pack-ship-build-collect (Windows shape)', () => 
     expect(artifacts[0].path).toBe(
       '/repo/papercusp-desktop/src-tauri/target/windows-vm/bundle/nsis/Papercusp_0.0.2_x64-setup.exe',
     );
+    // EI-7474: collectDir is created BEFORE the download loop.
+    expect(mkdirCalls).toEqual(['/repo/papercusp-desktop/src-tauri/target/windows-vm/bundle/nsis']);
 
     // order: reachable(ssh echo) → tar → scp up → ssh EXTRACT → ssh BUILD → ssh LIST → scp down
     const seq = calls.map((c) => `${c[0]}:${c[0] === 'ssh' ? c[c.length - 1] : c[0] === 'tar' ? 'tar' : 'scp'}`);
@@ -131,6 +154,53 @@ describe('makeVmBuildDriver — build-in-place (Mac shape)', () => {
     const kinds = calls.map((c) => c[0]);
     expect(kinds).not.toContain('tar'); // no pack
     expect(calls.filter((c) => c[0] === 'scp')).toHaveLength(1); // only the download
+  });
+
+  it('EI-7474: mkdir(collectDir) runs before the scp-download, so a fresh/missing collectDir does not silently drop artifacts', async () => {
+    const order: string[] = [];
+    const recipe: VmBuildRecipe = {
+      remoteBuildCommand: 'MACBUILD',
+      listCommand: 'LSDMG',
+      remoteBundlePath: (n) => `~/build/dmg/${n}`,
+      collectDir: '/fresh/not-yet-created/bundle/dmg',
+    };
+    const driver = makeVmBuildDriver('macos-universal', () => recipe);
+    const exec: ExecPort = {
+      async run(cmd, args): Promise<ExecResult> {
+        if (cmd === 'ssh') {
+          order.push('ssh');
+          const remote = args[args.length - 1];
+          if (remote === 'echo VM-OK') return { code: 0, stdout: 'VM-OK', stderr: '' };
+          if (remote === 'MACBUILD') return { code: 0, stdout: 'Finished', stderr: '' };
+          if (remote === 'LSDMG') return { code: 0, stdout: 'Papercusp_0.0.2_universal.dmg', stderr: '' };
+        }
+        if (cmd === 'scp') order.push('scp');
+        return { code: 0, stdout: '', stderr: '' };
+      },
+    };
+    const p: ReleasePorts = {
+      exec,
+      fs: {
+        readText: async () => '',
+        writeText: async () => {},
+        exists: async () => false,
+        readDir: async () => [],
+        mkdir: async (dir) => {
+          order.push(`mkdir:${dir}`);
+        },
+      },
+      log: { info: () => {}, warn: () => {} },
+      env: () => undefined,
+      now: () => 'T',
+    };
+
+    const artifacts = await driver.build(cfg(), p);
+    expect(artifacts).toHaveLength(1);
+    // mkdir must precede the download (scp), not follow or race it.
+    const mkdirIdx = order.indexOf('mkdir:/fresh/not-yet-created/bundle/dmg');
+    const scpIdx = order.indexOf('scp');
+    expect(mkdirIdx).toBeGreaterThanOrEqual(0);
+    expect(scpIdx).toBeGreaterThan(mkdirIdx);
   });
 
   it('throws a clear error when no VM config exists for the target', async () => {
