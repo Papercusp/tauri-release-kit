@@ -57,6 +57,10 @@ export interface FsPort {
   exists(path: string): Promise<boolean>;
   /** Basenames of entries in `dir`; resolves to [] if the dir is missing. */
   readDir(dir: string): Promise<string[]>;
+  /** Create `dir` (and any missing parents) if it doesn't already exist — a
+   *  no-op if it does (EI-7474: a driver downloading into a not-yet-created
+   *  collectDir must call this FIRST, else the write silently fails/drops). */
+  mkdir(dir: string): Promise<void>;
 }
 
 export interface LogPort {

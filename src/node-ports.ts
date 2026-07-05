@@ -4,7 +4,7 @@
  * dom-safe + borrowable. A host (a bin/release CLI) wires these in.
  */
 import { spawn } from 'node:child_process';
-import { access, readFile, writeFile, readdir } from 'node:fs/promises';
+import { access, readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
 import type {
   ExecOptions,
   ExecPort,
@@ -70,6 +70,9 @@ export function nodeFs(): FsPort {
       } catch {
         return [];
       }
+    },
+    mkdir: async (dir) => {
+      await mkdir(dir, { recursive: true });
     },
   };
 }

@@ -114,6 +114,11 @@ export function makeVmBuildDriver(
       const listed = await frame.run(recipe.listCommand);
       const names = (recipe.parseList ?? defaultParseList)(listed.stdout);
       const classify = recipe.classify ?? cfg.classifyArtifact ?? defaultClassifyArtifact;
+      // EI-7474: scp-download into a not-yet-created collectDir fails "No such
+      // file or directory" — a SUCCESSFUL remote build then silently drops its
+      // artifact (0 collected). Create it (recursive, idempotent) once before
+      // the download loop, same as every other consumer worked around by hand.
+      await ports.fs.mkdir(recipe.collectDir);
       const artifacts: Artifact[] = [];
       for (const name of names) {
         const local = joinPath(recipe.collectDir, name);
