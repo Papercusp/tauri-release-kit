@@ -39,6 +39,11 @@ class MemFs implements FsPort {
     }
     return [...names];
   }
+  dirs = new Set<string>();
+  async mkdir(dir: string) {
+    // EI-7474: FsPort.mkdir — in-memory fake just records the dir was made.
+    this.dirs.add(dir);
+  }
 }
 
 function ports(fs: MemFs): ReleasePorts {

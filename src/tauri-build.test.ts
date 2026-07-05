@@ -81,6 +81,9 @@ describe('collectArtifacts filtering (the dir + stale-version bug from the live 
     writeText: async () => {},
     exists: async () => true,
     readDir: async (dir) => entries[dir] ?? [],
+    // EI-7474: FsPort now requires mkdir; collectArtifacts never calls it
+    // (read-only), but the literal must still satisfy the interface.
+    mkdir: async () => {},
   });
   const portsWith = (f: FsPort): ReleasePorts => ({
     exec: { async run() { return { code: 0, stdout: '', stderr: '' }; } },
