@@ -12,6 +12,19 @@ export function defaultSigPath(path: string): string {
  * Mirrors the selection in bin/release-local.sh's latest.json generator:
  *   AppImage → linux; -amd64.msi → windows; aarch64 AppImage → linux-aarch64.
  * Adds the macOS universal `.dmg` the build-system docs describe.
+ *
+ * ⚠ WI-3696 latent gap: this kit's `TauriReleaseConfig` (types.ts) has no
+ * multi-role concept yet (one `appName`/`appId` per config), so it doesn't
+ * currently reproduce papercusp-desktop's GUI+Server two-bundle split. If a
+ * caller ever DOES feed it two roles' artifacts side by side (e.g. porting
+ * that split into this kit), this classifier — and buildLatestManifest's
+ * last-one-wins `platforms[a.platformKey] = …` — will reproduce the EXACT
+ * bug fixed in release-local.sh: "Papercusp GUI_…_x64-setup.exe" and
+ * "Papercusp Server_…_x64-setup.exe" both classify as the SAME
+ * 'windows-x86_64' key, and whichever is processed last silently wins with a
+ * genuinely-valid signature (a real wrong-product-install risk, not just a
+ * cosmetic bug). Before wiring multi-role support into this kit, add the same
+ * "exclude/only-GUI" filter release-local.sh now applies.
  */
 export function defaultClassifyArtifact(path: string): PlatformKey | null {
   const lower = path.toLowerCase();
