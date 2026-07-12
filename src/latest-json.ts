@@ -19,6 +19,14 @@ export function buildLatestManifest(opts: {
   channel: Channel;
   tag: string;
   artifacts: ManifestArtifact[];
+  /**
+   * Builds the download url for an artifact. MUST percent-encode the filename
+   * segment: bundle names routinely contain spaces ("Papercusp GUI.app.tar.gz"),
+   * and a url carrying a literal space is rejected by the client outright, so the
+   * manifest validates and the signature verifies while the download still fails.
+   * Encode ONLY the name — a base url may legitimately carry path segments whose
+   * slashes must survive. Violations are rejected below rather than shipped.
+   */
   urlFor: (a: { tag: string; name: string }) => string;
   pubDate: string;
   appName?: string;
@@ -26,10 +34,20 @@ export function buildLatestManifest(opts: {
 }): LatestManifest {
   const platforms: Record<string, PlatformEntry> = {};
   for (const a of opts.artifacts) {
-    platforms[a.platformKey] = {
-      signature: a.signature,
-      url: opts.urlFor({ tag: opts.tag, name: a.name }),
-    };
+    const url = opts.urlFor({ tag: opts.tag, name: a.name });
+    // Fail loud on an unfetchable url. The downstream failure is SILENT — an
+    // updater cannot distinguish a failed check from "no update available", so a
+    // malformed url surfaces to users as "up to date" forever rather than as an
+    // error. `urlFor` is a caller seam, so this is the only place the kit can
+    // catch it.
+    if (/\s/.test(url)) {
+      throw new Error(
+        `latest.json: url for ${a.platformKey} contains whitespace (${JSON.stringify(url)}) — ` +
+          `percent-encode the filename segment in urlFor(); a client rejects this url and the ` +
+          `updater would silently report "up to date"`,
+      );
+    }
+    platforms[a.platformKey] = { signature: a.signature, url };
   }
   const label = opts.appName ?? 'Desktop';
   return {

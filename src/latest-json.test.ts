@@ -4,6 +4,44 @@ import { buildLatestManifest } from './latest-json.js';
 const urlFor = ({ tag, name }: { tag: string; name: string }) =>
   `https://github.com/Papercusp/papercusp-desktop/releases/download/${tag}/${name}`;
 
+describe('buildLatestManifest — unfetchable urls are refused (WI-4364)', () => {
+  // Bundle names with SPACES ("Papercusp GUI.app.tar.gz") are the norm on macOS
+  // and Windows. A url carrying a literal space is rejected by the client, but the
+  // manifest still validates and the signature still verifies — and because an
+  // updater reads a failed check as "no update", it presents as "up to date"
+  // forever. Fail at build time instead.
+  const rawUrlFor = ({ tag, name }: { tag: string; name: string }) =>
+    `https://dl.example.com/secret/${tag}/${name}`;
+  const encodedUrlFor = ({ tag, name }: { tag: string; name: string }) =>
+    `https://dl.example.com/secret/${tag}/${encodeURIComponent(name)}`;
+
+  const spacedArtifact = {
+    name: 'Papercusp GUI.app.tar.gz',
+    platformKey: 'darwin-aarch64' as const,
+    signature: 'SIG_MAC',
+  };
+  const base = {
+    version: '0.0.8',
+    channel: 'stable' as const,
+    tag: 'desktop-v0.0.8',
+    pubDate: '2026-07-12T00:00:00.000Z',
+    artifacts: [spacedArtifact],
+  };
+
+  it('throws when urlFor leaves a literal space in the url', () => {
+    expect(() => buildLatestManifest({ ...base, urlFor: rawUrlFor })).toThrow(/whitespace/i);
+  });
+
+  it('accepts a percent-encoded filename and preserves the base path segments', () => {
+    const m = buildLatestManifest({ ...base, urlFor: encodedUrlFor });
+    expect(m.platforms['darwin-aarch64'].url).toBe(
+      'https://dl.example.com/secret/desktop-v0.0.8/Papercusp%20GUI.app.tar.gz',
+    );
+    // the base's own slashes must survive — only the name is encoded
+    expect(m.platforms['darwin-aarch64'].url).toContain('/secret/desktop-v0.0.8/');
+  });
+});
+
 describe('buildLatestManifest', () => {
   it('maps each signed artifact to a platform entry with url + signature', () => {
     const m = buildLatestManifest({
