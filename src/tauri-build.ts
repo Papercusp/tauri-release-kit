@@ -12,7 +12,13 @@ export function signingEnv(
     ? ports.env(cfg.signing.passwordEnv) ?? ''
     : '';
   return {
-    TAURI_SIGNING_PRIVATE_KEY_PATH: cfg.signing.keyPath,
+    // Tauri v2's updater-signing env var — it accepts EITHER the key file path
+    // OR the key content; we pass the path. The pre-v2 name this used to emit,
+    // `TAURI_SIGNING_PRIVATE_KEY_PATH`, is IGNORED by the v2 CLI, so a build with
+    // `bundle.createUpdaterArtifacts` failed with "A public key has been found,
+    // but no private key" (or, without that flag, silently produced an EMPTY
+    // latest.json signature). EI-12203.
+    TAURI_SIGNING_PRIVATE_KEY: cfg.signing.keyPath,
     TAURI_SIGNING_PRIVATE_KEY_PASSWORD: password,
   };
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveTargetDir, bundleRootFor, collectArtifacts, isArtifactFile } from './tauri-build.js';
+import { resolveTargetDir, bundleRootFor, collectArtifacts, isArtifactFile, signingEnv } from './tauri-build.js';
 import type { ExecPort, FsPort, ReleasePorts, TauriReleaseConfig } from './types.js';
 
 function cfg(extra: Partial<TauriReleaseConfig> = {}): TauriReleaseConfig {
@@ -61,6 +61,27 @@ describe('resolveTargetDir (the ~/.cargo-target redirect bug)', () => {
       },
     };
     expect(await resolveTargetDir(ports(exec), cfg())).toBe('/app/src-tauri/target');
+  });
+});
+
+describe('signingEnv (EI-12203: must emit the Tauri v2 var, not the ignored _PATH)', () => {
+  it('sets TAURI_SIGNING_PRIVATE_KEY (v2 accepts the key path) — NOT the ignored _PATH', () => {
+    const env = signingEnv(cfg({ signing: { keyPath: '/keys/app.key' } }), ports({ async run() { return { code: 0, stdout: '', stderr: '' }; } }));
+    // The v2 CLI reads TAURI_SIGNING_PRIVATE_KEY; the old _PATH name is a no-op
+    // that left createUpdaterArtifacts builds unsigned.
+    expect(env.TAURI_SIGNING_PRIVATE_KEY).toBe('/keys/app.key');
+    expect('TAURI_SIGNING_PRIVATE_KEY_PATH' in env).toBe(false);
+  });
+
+  it('reads the password from the named env var (empty string when unset)', () => {
+    const withPw = signingEnv(
+      cfg({ signing: { keyPath: '/k', passwordEnv: 'MY_PW' } }),
+      { exec: { async run() { return { code: 0, stdout: '', stderr: '' }; } }, fs: {} as never, log: { info: () => {}, warn: () => {} }, env: (n) => (n === 'MY_PW' ? 'secret' : undefined), now: () => 'T' },
+    );
+    expect(withPw.TAURI_SIGNING_PRIVATE_KEY_PASSWORD).toBe('secret');
+    // No passwordEnv configured ⇒ empty password (not undefined).
+    const noPw = signingEnv(cfg({ signing: { keyPath: '/k' } }), ports({ async run() { return { code: 0, stdout: '', stderr: '' }; } }));
+    expect(noPw.TAURI_SIGNING_PRIVATE_KEY_PASSWORD).toBe('');
   });
 });
 

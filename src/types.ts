@@ -88,7 +88,7 @@ export type VersionFile =
   | { path: string; kind: 'cargo-toml' };
 
 export interface SigningConfig {
-  /** Tauri minisign private key path (→ TAURI_SIGNING_PRIVATE_KEY_PATH). */
+  /** Tauri minisign private key path (→ TAURI_SIGNING_PRIVATE_KEY, the v2 var). */
   keyPath: string;
   /** Env var holding the key password (→ TAURI_SIGNING_PRIVATE_KEY_PASSWORD). */
   passwordEnv?: string;
