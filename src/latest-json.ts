@@ -60,3 +60,30 @@ export function buildLatestManifest(opts: {
     platforms,
   };
 }
+
+/**
+ * Merge a freshly-built `overlay` manifest ONTO a previously-published `base`
+ * one (EI-18683062996592825, revising EI-18111560213741904): every platform
+ * key in `overlay` wins; every OTHER platform key already in `base` carries
+ * through byte-for-byte UNTOUCHED — never regenerated, never re-signed, never
+ * re-dated. This is what lets an incremental single-platform publish add e.g.
+ * `darwin-aarch64` onto an already-live `linux-x86_64` release without
+ * touching (or re-uploading) linux's entry.
+ *
+ * `base` is `null`/`undefined` on a first publish (nothing live yet, or the
+ * live manifest was unreachable) — the result is then just `overlay`, i.e.
+ * identical to a fresh cut.
+ *
+ * The rest of the manifest (version/channel/notes/pub_date) always comes from
+ * `overlay` — an incremental publish is publishing a NEW version, so its
+ * metadata is what should be live, even though most of `platforms` is old.
+ */
+export function mergeLatestManifest(
+  base: LatestManifest | null | undefined,
+  overlay: LatestManifest,
+): LatestManifest {
+  return {
+    ...overlay,
+    platforms: { ...(base?.platforms ?? {}), ...overlay.platforms },
+  };
+}

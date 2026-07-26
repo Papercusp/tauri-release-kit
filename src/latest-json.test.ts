@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildLatestManifest } from './latest-json.js';
+import { buildLatestManifest, mergeLatestManifest } from './latest-json.js';
 
 const urlFor = ({ tag, name }: { tag: string; name: string }) =>
   `https://github.com/Papercusp/papercusp-desktop/releases/download/${tag}/${name}`;
@@ -77,5 +77,67 @@ describe('buildLatestManifest', () => {
       urlFor,
     });
     expect(m.platforms).toEqual({});
+  });
+});
+
+describe('mergeLatestManifest (EI-18683062996592825 — incremental single-platform publish)', () => {
+  const live = {
+    version: '0.0.12',
+    channel: 'alpha' as const,
+    notes: 'old',
+    pub_date: '2026-07-01T00:00:00.000Z',
+    platforms: {
+      'linux-x86_64': { signature: 'LINUX_SIG', url: 'https://dl.example.com/x/linux.AppImage' },
+      'windows-x86_64': { signature: 'WIN_SIG', url: 'https://dl.example.com/x/win.msi' },
+    },
+  };
+
+  it('overlays the new platform(s) while leaving every other platform key byte-for-byte untouched', () => {
+    const overlay = buildLatestManifest({
+      version: '0.0.13',
+      channel: 'alpha',
+      tag: 'desktop-v0.0.13-alpha',
+      pubDate: '2026-07-26T00:00:00.000Z',
+      artifacts: [{ name: 'mac.app.tar.gz', platformKey: 'darwin-universal', signature: 'MAC_SIG' }],
+      urlFor,
+    });
+    const merged = mergeLatestManifest(live, overlay);
+
+    // untouched, verbatim
+    expect(merged.platforms['linux-x86_64']).toEqual(live.platforms['linux-x86_64']);
+    expect(merged.platforms['windows-x86_64']).toEqual(live.platforms['windows-x86_64']);
+    // new platform added
+    expect(merged.platforms['darwin-universal']).toEqual(overlay.platforms['darwin-universal']);
+    // metadata comes from the NEW publish, not the stale live one
+    expect(merged.version).toBe('0.0.13');
+    expect(merged.pub_date).toBe('2026-07-26T00:00:00.000Z');
+  });
+
+  it('re-publishing an already-live platform OVERWRITES just that key', () => {
+    const overlay = buildLatestManifest({
+      version: '0.0.13',
+      channel: 'alpha',
+      tag: 'desktop-v0.0.13-alpha',
+      pubDate: '2026-07-26T00:00:00.000Z',
+      artifacts: [{ name: 'linux2.AppImage', platformKey: 'linux-x86_64', signature: 'LINUX_SIG_V2' }],
+      urlFor,
+    });
+    const merged = mergeLatestManifest(live, overlay);
+    expect(merged.platforms['linux-x86_64']).toEqual(overlay.platforms['linux-x86_64']);
+    // the untouched sibling still survives
+    expect(merged.platforms['windows-x86_64']).toEqual(live.platforms['windows-x86_64']);
+  });
+
+  it('null/undefined base (first publish, or live manifest unreachable) ⇒ result is just the overlay', () => {
+    const overlay = buildLatestManifest({
+      version: '0.0.13',
+      channel: 'alpha',
+      tag: 'desktop-v0.0.13-alpha',
+      pubDate: '2026-07-26T00:00:00.000Z',
+      artifacts: [{ name: 'linux.AppImage', platformKey: 'linux-x86_64', signature: 'SIG' }],
+      urlFor,
+    });
+    expect(mergeLatestManifest(null, overlay)).toEqual(overlay);
+    expect(mergeLatestManifest(undefined, overlay)).toEqual(overlay);
   });
 });

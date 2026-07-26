@@ -9,6 +9,7 @@ import type {
   Artifact,
   LatestManifest,
   ReleasePorts,
+  TargetKey,
   TauriReleaseConfig,
 } from './types.js';
 import { assertValidChannel, assertValidVersion, defaultTagFor } from './tag.js';
@@ -17,6 +18,39 @@ import { resolveTargetDriver } from './registry.js';
 import { buildLatestManifest, type ManifestArtifact } from './latest-json.js';
 import { publishRelease } from './gh.js';
 import { joinPath } from './path.js';
+
+/**
+ * Build + sign every target in `targets`. Factored out of `runRelease` so
+ * `runIncrementalPublish` (incremental-publish.ts) can build just ONE
+ * platform's artifacts through the exact same path — no drift between a full
+ * multi-target cut and a single-platform incremental one.
+ */
+export async function buildAndSignTargets(
+  cfg: TauriReleaseConfig,
+  ports: ReleasePorts,
+  targets: TargetKey[],
+): Promise<{ artifacts: Artifact[]; signed: ManifestArtifact[] }> {
+  const artifacts: Artifact[] = [];
+  for (const t of targets) {
+    const driver = resolveTargetDriver(t);
+    ports.log.info(`building target ${t}`);
+    artifacts.push(...(await driver.build(cfg, ports)));
+  }
+  if (artifacts.length === 0) ports.log.warn('no artifacts produced');
+
+  const signed: ManifestArtifact[] = [];
+  for (const a of artifacts) {
+    if (!a.platformKey) continue;
+    let signature = '';
+    if (a.sigPath && (await ports.fs.exists(a.sigPath))) {
+      signature = (await ports.fs.readText(a.sigPath)).trim();
+    } else {
+      ports.log.warn(`no signature for ${a.name} (${a.platformKey})`);
+    }
+    signed.push({ name: a.name, platformKey: a.platformKey, signature });
+  }
+  return { artifacts, signed };
+}
 
 export interface RunReleaseOptions {
   /** Skip git commit/tag/push (e.g. a parity dry-run). Default false. */
@@ -68,27 +102,8 @@ export async function runRelease(
     ports,
   });
 
-  // 3. build each target
-  const artifacts: Artifact[] = [];
-  for (const t of cfg.targets) {
-    const driver = resolveTargetDriver(t);
-    ports.log.info(`building target ${t}`);
-    artifacts.push(...(await driver.build(cfg, ports)));
-  }
-  if (artifacts.length === 0) ports.log.warn('no artifacts produced');
-
-  // 4. read signatures for updater targets
-  const signed: ManifestArtifact[] = [];
-  for (const a of artifacts) {
-    if (!a.platformKey) continue;
-    let signature = '';
-    if (a.sigPath && (await ports.fs.exists(a.sigPath))) {
-      signature = (await ports.fs.readText(a.sigPath)).trim();
-    } else {
-      ports.log.warn(`no signature for ${a.name} (${a.platformKey})`);
-    }
-    signed.push({ name: a.name, platformKey: a.platformKey, signature });
-  }
+  // 3. build each target + 4. read signatures for updater targets
+  const { artifacts, signed } = await buildAndSignTargets(cfg, ports, cfg.targets);
 
   // 5. latest.json updater manifest
   const manifest = buildLatestManifest({

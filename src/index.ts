@@ -21,3 +21,6 @@ export * from './ssh-frame.js';
 export * from './drivers/linux.js';
 export * from './drivers/vm.js';
 export * from './node-ports.js';
+export * from './incremental-publish.js';
+export * from './cli.js';
+export * from './http.js';
