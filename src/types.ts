@@ -7,8 +7,16 @@
  * unit-testable with in-memory doubles (mirrors @papercusp/deployment-driver).
  */
 
-/** Release channel. Mirrors bin/release-local.sh's alpha|beta|stable. */
-export type Channel = 'alpha' | 'beta' | 'stable';
+/**
+ * Release channel — the vocabulary a CUT is made on.
+ *
+ * Broader than the set a user can switch between: `nightly` is a `side-by-side`
+ * channel (its own bundle id, name and data home — see `./channels.js`), so it
+ * is something you cut and install, never something you switch an existing
+ * install to. Ask a `ChannelRegistry` for `updateLaneIds()` when the question is
+ * "which lanes may this install move between".
+ */
+export type Channel = 'alpha' | 'beta' | 'stable' | 'nightly';
 
 /**
  * Updater platform key — the keys Tauri's updater + the operator's

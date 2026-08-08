@@ -9,6 +9,7 @@
  */
 export * from './types.js';
 export * from './tag.js';
+export * from './channels.js';
 export * from './version.js';
 export * from './artifacts.js';
 export * from './latest-json.js';
