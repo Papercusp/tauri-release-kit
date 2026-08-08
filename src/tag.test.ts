@@ -26,11 +26,21 @@ describe('version validation', () => {
 });
 
 describe('channel validation', () => {
-  it('recognizes the three channels', () => {
+  it('recognizes every cuttable channel', () => {
     expect(isValidChannel('alpha')).toBe(true);
     expect(isValidChannel('beta')).toBe(true);
     expect(isValidChannel('stable')).toBe(true);
-    expect(isValidChannel('nightly')).toBe(false);
+    // `nightly` became cuttable when the side-by-side channel model landed.
+    // It is a channel you CUT and INSTALL, not a lane an install switches to —
+    // that narrower question is `ChannelRegistry.updateLaneIds()`, and the two
+    // sets are deliberately different.
+    expect(isValidChannel('nightly')).toBe(true);
+  });
+
+  it('still rejects an unknown channel', () => {
+    expect(isValidChannel('insider')).toBe(false);
+    expect(isValidChannel('')).toBe(false);
+    expect(isValidChannel('Alpha')).toBe(false);
   });
 });
 

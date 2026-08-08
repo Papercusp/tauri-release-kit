@@ -18,8 +18,8 @@ const BASE: AppIdentity = {
 function fourChannelSpecs(): ChannelSpec[] {
   return [
     { id: 'alpha', distribution: 'update-lane', rootFeed: true, prerelease: true, promotesFrom: ['nightly'] },
-    { id: 'beta', distribution: 'update-lane', prerelease: true, strict: true, promotesFrom: ['alpha'] },
-    { id: 'stable', distribution: 'update-lane', strict: true, promotesFrom: ['beta'] },
+    { id: 'beta', distribution: 'update-lane', rootFeed: true, prerelease: true, strict: true, promotesFrom: ['alpha'] },
+    { id: 'stable', distribution: 'update-lane', rootFeed: true, strict: true, promotesFrom: ['beta'] },
     { id: 'nightly', distribution: 'side-by-side', identitySuffix: 'nightly', prerelease: true },
   ];
 }
@@ -61,39 +61,48 @@ describe('defineChannelRegistry — construction', () => {
 });
 
 describe('the ROOT FEED invariant — the address shipped binaries poll forever', () => {
-  it('requires exactly one owner', () => {
+  it('requires at least one publisher — with none, the permanent address goes stale', () => {
     expect(() =>
       defineChannelRegistry([
         { id: 'alpha', distribution: 'update-lane' },
         { id: 'stable', distribution: 'update-lane' },
       ]),
-    ).toThrow(/exactly one channel must set rootFeed/);
+    ).toThrow(/at least one channel must set rootFeed/);
   });
 
-  it('rejects two owners, naming both', () => {
+  it('ALLOWS several update lanes to publish to the root manifest', () => {
+    // The root manifest legitimately means "the most recent cut, whatever lane",
+    // with the lane gate applied downstream by whatever reads it. Forcing a
+    // single owner here would stop the other lanes publishing at all.
+    const ids = registry()
+      .rootFeedChannels()
+      .map((c) => c.id);
+    expect(ids).toEqual(['alpha', 'beta', 'stable']);
+  });
+
+  it('REFUSES a side-by-side channel that claims the root manifest', () => {
     expect(() =>
       defineChannelRegistry([
         { id: 'alpha', distribution: 'update-lane', rootFeed: true },
-        { id: 'stable', distribution: 'update-lane', rootFeed: true },
+        {
+          id: 'nightly',
+          distribution: 'side-by-side',
+          identitySuffix: 'nightly',
+          rootFeed: true,
+        },
       ]),
-    ).toThrow(/claimed by "alpha" and "stable"/);
+    ).toThrow(/must NOT set rootFeed/);
   });
 
-  it('rootFeedChannel names the owner', () => {
-    expect(registry().rootFeedChannel().id).toBe('alpha');
-  });
-
-  it('the root owner publishes BOTH its per-channel feed and the root manifest', () => {
+  it('a root publisher writes BOTH its per-channel feed and the root manifest', () => {
     expect(registry().feedPathsFor('alpha')).toEqual(['alpha/latest.json', 'latest.json']);
+    expect(registry().feedPathsFor('stable')).toEqual(['stable/latest.json', 'latest.json']);
   });
 
-  it('a non-root channel publishes ONLY its own feed — it must never touch the permanent address', () => {
-    const r = registry();
-    for (const id of ['beta', 'stable', 'nightly']) {
-      const paths = r.feedPathsFor(id);
-      expect(paths).toEqual([`${id}/latest.json`]);
-      expect(paths).not.toContain(DEFAULT_MANIFEST_NAME);
-    }
+  it('a side-by-side channel publishes ONLY its own feed — it never touches the permanent address', () => {
+    const paths = registry().feedPathsFor('nightly');
+    expect(paths).toEqual(['nightly/latest.json']);
+    expect(paths).not.toContain(DEFAULT_MANIFEST_NAME);
   });
 
   it('writes the root manifest LAST, so a partial publish leaves it on the last known good release', () => {

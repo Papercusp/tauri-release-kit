@@ -58,10 +58,16 @@ export interface ChannelSpec {
   distribution: ChannelDistribution;
   /**
    * This channel ALSO publishes to the permanent root manifest
-   * (`<base>/latest.json`) — the address already-shipped binaries poll.
-   * Exactly one channel in a registry may set it, and it must be the channel
-   * those binaries are actually receiving today. Getting this wrong strands
-   * every existing install, silently.
+   * (`<base>/latest.json`) — the address already-shipped binaries poll forever.
+   *
+   * At least one channel must set it: with no publisher, that address goes
+   * stale and every existing install silently stops updating. Several MAY set
+   * it — a root manifest can legitimately mean "the most recent cut, whatever
+   * lane", with the lane gate applied downstream by whatever reads it.
+   *
+   * A `side-by-side` channel may NEVER set it: that channel is a different
+   * application, and publishing it to the main app's permanent address offers
+   * every installed user an update into a different product.
    */
   rootFeed?: boolean;
   /**
@@ -152,8 +158,8 @@ export interface ChannelRegistry {
   sideBySideIds(): readonly string[];
   /** The channel, or throw naming the valid ids. */
   get(id: string): ResolvedChannel;
-  /** The single channel that owns the permanent root manifest. */
-  rootFeedChannel(): ResolvedChannel;
+  /** The channels that publish to the permanent root manifest (never empty). */
+  rootFeedChannels(): readonly ResolvedChannel[];
   /**
    * Manifest object paths a cut on `id` must publish, relative to the update
    * base — the per-channel feed always, plus the root manifest when this
@@ -257,17 +263,16 @@ export function defineChannelRegistry(
     byId.set(entry.id, entry);
   }
 
-  const rootOwners = resolved.filter((c) => c.rootFeed);
+  const rootOwners = Object.freeze(resolved.filter((c) => c.rootFeed));
   if (rootOwners.length === 0) {
     throw new Error(
-      'channel registry: exactly one channel must set rootFeed — it owns the PERMANENT manifest address already-shipped binaries poll. With no owner, nothing publishes there and every existing install silently stops updating.',
+      'channel registry: at least one channel must set rootFeed — it publishes to the PERMANENT manifest address already-shipped binaries poll. With no publisher that address goes stale and every existing install silently stops updating.',
     );
   }
-  if (rootOwners.length > 1) {
+  const sideBySideRoot = rootOwners.find((c) => c.distribution === 'side-by-side');
+  if (sideBySideRoot) {
     throw new Error(
-      `channel registry: rootFeed is claimed by ${rootOwners
-        .map((c) => `"${c.id}"`)
-        .join(' and ')} — only one channel can own the permanent manifest address`,
+      `channel "${sideBySideRoot.id}": a side-by-side channel must NOT set rootFeed — it is a different application, and publishing it to the main app's permanent manifest address would offer every installed user an update into a different product`,
     );
   }
 
@@ -312,7 +317,7 @@ export function defineChannelRegistry(
     get,
     updateLaneIds: () => laneIds,
     sideBySideIds: () => sideIds,
-    rootFeedChannel: () => rootOwners[0]!,
+    rootFeedChannels: () => rootOwners,
     feedPathsFor(id: string, manifestName = DEFAULT_MANIFEST_NAME) {
       const c = get(id);
       const paths = [`${c.id}/${manifestName}`];
