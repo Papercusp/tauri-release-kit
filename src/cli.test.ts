@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parsePublishArgs, targetKeyForPlatform } from './cli.js';
+import { CHANNELS } from './tag.js';
 
 describe('parsePublishArgs', () => {
   it('parses the documented shape: publish --platform <p> --incremental <ver> <channel>', () => {
@@ -59,9 +60,23 @@ describe('parsePublishArgs', () => {
   });
 
   it('rejects an invalid channel', () => {
+    // `nightly` was this probe's example of an invalid channel until it became a
+    // real (side-by-side) one — `insider` is a name that genuinely is not.
     expect(() =>
-      parsePublishArgs(['publish', '--platform', 'linux', '--incremental', '0.0.13', 'nightly']),
-    ).toThrow(/channel must be alpha\|beta\|stable/);
+      parsePublishArgs(['publish', '--platform', 'linux', '--incremental', '0.0.13', 'insider']),
+    ).toThrow(/channel must be alpha\|beta\|stable\|nightly/);
+  });
+
+  it('accepts every channel the kit declares', () => {
+    // Guards the drift this message used to invite: the error text is derived
+    // from CHANNELS, so a channel added to the union cannot be rejected here
+    // while claiming to be valid elsewhere.
+    for (const channel of CHANNELS) {
+      expect(
+        parsePublishArgs(['publish', '--platform', 'linux', '--incremental', '0.0.13', channel])
+          .channel,
+      ).toBe(channel);
+    }
   });
 
   it('rejects an unknown flag', () => {

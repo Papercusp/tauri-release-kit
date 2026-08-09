@@ -9,7 +9,7 @@
  * with this, then wires `runIncrementalPublish` (incremental-publish.ts).
  */
 import type { Channel, TargetKey } from './types.js';
-import { isValidChannel } from './tag.js';
+import { CHANNELS, isValidChannel } from './tag.js';
 
 /** The CLI's friendly platform vocabulary → the kit's TargetKey. */
 export const PUBLISH_PLATFORMS = ['linux', 'darwin', 'windows'] as const;
@@ -86,7 +86,12 @@ export function parsePublishArgs(argv: readonly string[]): PublishArgs {
   if (!version) throw new Error('missing <version>');
   if (!channel) throw new Error('missing <channel>');
   if (!isValidChannel(channel)) {
-    throw new Error(`channel must be alpha|beta|stable (got ${JSON.stringify(channel)})`);
+    // Derived from CHANNELS, not spelled out: a hardcoded list here silently
+    // goes stale the moment a channel is added, and it is the message a caller
+    // reads to learn what the valid channels ARE.
+    throw new Error(
+      `channel must be ${CHANNELS.join('|')} (got ${JSON.stringify(channel)})`,
+    );
   }
 
   return {
