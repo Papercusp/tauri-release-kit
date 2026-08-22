@@ -163,6 +163,94 @@ async function gitCommitTagPush(
   }
   const tagged = await ports.exec.run('git', ['-C', cfg.root, 'tag', '-f', tag]);
   if (tagged.code !== 0) throw new Error(`git tag failed: ${tagged.stderr || tagged.stdout}`);
-  const push = await ports.exec.run('git', ['-C', cfg.root, 'push', 'origin', 'HEAD', tag]);
+
+  // Push to an EXPLICIT destination ref, never a bare `HEAD`. A release cut
+  // routinely runs in an ephemeral clone checked out at a pinned sha, where
+  // HEAD is DETACHED — and `git push origin HEAD` cannot derive a destination
+  // branch from a detached HEAD, so the version-bump commit reaches no branch
+  // in the canonical repo and dies with the throwaway clone. That is exactly
+  // how desktop 0.0.18 shipped while every canonical versionFile stayed on
+  // 0.0.17 and no source build could ever report the shipped version.
+  const branchProbe = await ports.exec.run('git', [
+    '-C',
+    cfg.root,
+    'symbolic-ref',
+    '--quiet',
+    '--short',
+    'HEAD',
+  ]);
+  const branch =
+    (branchProbe.code === 0 ? branchProbe.stdout.trim() : '') || cfg.releaseBranch || 'main';
+  const push = await ports.exec.run('git', [
+    '-C',
+    cfg.root,
+    'push',
+    'origin',
+    `HEAD:refs/heads/${branch}`,
+    `refs/tags/${tag}`,
+  ]);
   if (push.code !== 0) throw new Error(`git push failed: ${push.stderr || push.stdout}`);
+
+  await assertPushLanded(ports, cfg, tag, branch);
+}
+
+/**
+ * Recurrence guard for the lost-version-bump class: a push reporting success is
+ * not proof the canonical repo received it. Re-read the REMOTE and require the
+ * release tag to resolve there to exactly the commit just made, on a real
+ * branch. Without this the loss is invisible until a release later, when every
+ * source build still reports the previous version.
+ */
+async function assertPushLanded(
+  ports: ReleasePorts,
+  cfg: TauriReleaseConfig,
+  tag: string,
+  branch: string,
+): Promise<void> {
+  const head = await ports.exec.run('git', ['-C', cfg.root, 'rev-parse', 'HEAD']);
+  const localSha = head.stdout.trim();
+  if (head.code !== 0 || !localSha) {
+    throw new Error(
+      `release push verification failed: cannot resolve local HEAD (${head.stderr || head.stdout})`,
+    );
+  }
+  const ls = await ports.exec.run('git', [
+    '-C',
+    cfg.root,
+    'ls-remote',
+    'origin',
+    `refs/heads/${branch}`,
+    `refs/tags/${tag}`,
+  ]);
+  if (ls.code !== 0) {
+    throw new Error(
+      `release push verification failed: git ls-remote origin errored (${ls.stderr || ls.stdout})`,
+    );
+  }
+  const refs = new Map<string, string>();
+  for (const line of ls.stdout.split('\n')) {
+    const [sha, ref] = line.trim().split(/\s+/);
+    if (sha && ref) refs.set(ref, sha);
+  }
+  const remoteTag = refs.get(`refs/tags/${tag}`) ?? refs.get(`refs/tags/${tag}^{}`);
+  if (!remoteTag) {
+    throw new Error(
+      `release push verification failed: refs/tags/${tag} is absent from origin after the push — ` +
+        `the version bump never reached the canonical repo, so every source build will keep ` +
+        `reporting the previous version`,
+    );
+  }
+  if (remoteTag !== localSha) {
+    throw new Error(
+      `release push verification failed: origin refs/tags/${tag} is ${remoteTag}, ` +
+        `expected the release commit ${localSha}`,
+    );
+  }
+  if (!refs.has(`refs/heads/${branch}`)) {
+    throw new Error(
+      `release push verification failed: origin has no refs/heads/${branch} after the push — ` +
+        `the release commit is not on any branch`,
+    );
+  }
+  ports.log.info(`  push verified on origin: ${branch} + ${tag} → ${localSha.slice(0, 12)}`);
 }

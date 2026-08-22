@@ -135,6 +135,14 @@ export interface TauriReleaseConfig {
   channel: Channel;
   /** Files whose version is bumped in lockstep. */
   versionFiles: VersionFile[];
+  /**
+   * Destination branch for the release commit + tag. Defaults to the branch
+   * currently checked out, falling back to `main` when HEAD is DETACHED — the
+   * normal state for a cut running in an ephemeral clone pinned to a sha, where
+   * a bare `git push origin HEAD` can derive no destination and the bump is
+   * silently lost with the throwaway clone.
+   */
+  releaseBranch?: string;
   /** Target drivers to run, in order. */
   targets: TargetKey[];
   signing: SigningConfig;
