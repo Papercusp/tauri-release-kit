@@ -4,6 +4,7 @@
  * dom-safe + borrowable. A host (a bin/release CLI) wires these in.
  */
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { access, readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
 import type {
   ExecOptions,
@@ -31,20 +32,36 @@ export function nodeExec(opts: NodeExecOptions = {}): ExecPort {
         });
         let stdout = '';
         let stderr = '';
+        const stdoutDecoder = new StringDecoder('utf8');
+        const stderrDecoder = new StringDecoder('utf8');
         child.stdout?.on('data', (d: Buffer) => {
-          const s = d.toString();
+          const s = stdoutDecoder.write(d);
           stdout += s;
           if (inherit) process.stdout.write(s);
         });
         child.stderr?.on('data', (d: Buffer) => {
-          const s = d.toString();
+          const s = stderrDecoder.write(d);
           stderr += s;
           if (inherit) process.stderr.write(s);
         });
-        child.on('error', (e) =>
-          resolve({ code: 127, stdout, stderr: `${stderr}${String(e)}` }),
-        );
-        child.on('close', (code) => resolve({ code: code ?? 0, stdout, stderr }));
+        const flushDecoders = (): void => {
+          const outTail = stdoutDecoder.end();
+          const errTail = stderrDecoder.end();
+          stdout += outTail;
+          stderr += errTail;
+          if (inherit) {
+            if (outTail) process.stdout.write(outTail);
+            if (errTail) process.stderr.write(errTail);
+          }
+        };
+        child.on('error', (e) => {
+          flushDecoders();
+          resolve({ code: 127, stdout, stderr: `${stderr}${String(e)}` });
+        });
+        child.on('close', (code) => {
+          flushDecoders();
+          resolve({ code: code ?? 0, stdout, stderr });
+        });
       });
     },
   };

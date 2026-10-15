@@ -27,6 +27,19 @@ describe('node-ports (real fs + subprocess)', () => {
     expect(fail.code).toBe(3);
   });
 
+  it('exec preserves UTF-8 characters split across independent output streams', async () => {
+    const r = await ports.exec.run('node', ['-e', [
+      "process.stdout.write(Buffer.from([0xc3]));",
+      "process.stderr.write(Buffer.from([0xe2]));",
+      "setTimeout(() => {",
+      "  process.stdout.write(Buffer.from([0xa9]));",
+      "  process.stderr.write(Buffer.from([0x9a, 0x99]));",
+      "}, 10);",
+    ].join(' ')]);
+    expect(r.stdout).toBe('é');
+    expect(r.stderr).toBe('⚙');
+  });
+
   it('exec passes env through', async () => {
     const r = await ports.exec.run('node', ['-e', 'process.stdout.write(process.env.TRK_X || "")'], {
       env: { TRK_X: 'yes' },
