@@ -25,3 +25,4 @@ export * from './node-ports.js';
 export * from './incremental-publish.js';
 export * from './cli.js';
 export * from './http.js';
+export * from './signature.mjs';
