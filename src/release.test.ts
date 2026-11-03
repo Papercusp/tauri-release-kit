@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { runRelease } from './release.js';
+import { runRelease, buildAndSignTargets } from './release.js';
 import { registerTargetDriver, clearTargetDrivers } from './registry.js';
 import { linuxX86Driver } from './drivers/linux.js';
 import type { ExecPort, ExecResult, FsPort, ReleasePorts, TauriReleaseConfig } from './types.js';
@@ -144,6 +144,14 @@ describe('runRelease (end-to-end with fakes)', () => {
   beforeEach(() => {
     clearTargetDrivers();
     registerTargetDriver(linuxX86Driver);
+  });
+
+  it('retains driver-provided authorization when collecting signed artifacts', async () => {
+    const updateAuthorization = { payload: 'reviewed bytes', signature: 'release signature', approvalSignature: 'approval signature' };
+    registerTargetDriver({ key: 'approved-fixture', build: async () => [{ path: '/fixture', name: 'fixture.AppImage',
+      platformKey: 'linux-x86_64', sigPath: '/fixture.sig', updateAuthorization }] });
+    const result = await buildAndSignTargets(makeConfig(), makePorts(new MemFs({ '/fixture.sig': 'artifact signature' }), []), ['approved-fixture']);
+    expect(result.signed[0].updateAuthorization).toEqual(updateAuthorization);
   });
 
   it('bumps versions, builds, signs, writes latest.json, and publishes', async () => {

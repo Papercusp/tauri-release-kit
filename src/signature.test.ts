@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { encodeTauriUpdateAuthorization, verifyTauriSignature, verifyTauriUpdateAuthorization,
   type TauriUpdateAuthorization, type TauriUpdateCandidate, type TauriUpdateTrust } from './signature.mjs';
+import { buildLatestManifest, mergeLatestManifest } from './latest-json.js';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -107,6 +108,26 @@ function authorizationFixture() {
 }
 
 describe('exact independently approved update authorization', () => {
+  it('preserves authentic approval bytes through manifest construction, incremental merge and JSON transport', async () => {
+    const f = authorizationFixture();
+    const envelope = f.envelope();
+    const manifest = buildLatestManifest({ version: f.metadata.version, channel: 'stable', tag: 'desktop-v1.2.3',
+      pubDate: '2026-11-03T00:00:00Z', urlFor: ({ name }) => `https://example.test/${name}`,
+      artifacts: [{ name: 'gui.AppImage', platformKey: f.metadata.platform, signature: 'artifact-signature',
+        updateAuthorization: envelope }],
+    });
+    // Later driver mutations cannot change a manifest already constructed for publication.
+    envelope.signature = 'changed-after-publication';
+    const overlay = { ...manifest, platforms: {} };
+    const transported = JSON.parse(JSON.stringify(mergeLatestManifest(manifest, overlay)));
+    const actual = transported.platforms[f.metadata.platform].updateAuthorization;
+    expect(actual.payload).toBe(envelope.payload);
+    expect(await verifyTauriUpdateAuthorization(f.trust, actual, f.candidate, 2000)).toMatchObject({ valid: true });
+    actual.payload = encodeTauriUpdateAuthorization({ ...f.metadata, rollbackCounter: 8 });
+    expect(await verifyTauriUpdateAuthorization(f.trust, actual,
+      { ...f.candidate, rollbackCounter: 8 }, 2000)).toMatchObject({ valid: false });
+  });
+
   it('accepts authentic signatures over the exact artifact, reviewed metadata and current trust epoch', async () => {
     const f = authorizationFixture();
     const envelope = f.envelope();

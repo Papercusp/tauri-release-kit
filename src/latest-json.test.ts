@@ -43,6 +43,15 @@ describe('buildLatestManifest — unfetchable urls are refused (WI-4364)', () =>
 });
 
 describe('buildLatestManifest', () => {
+  it.each([null, {}, { payload: '{}', signature: 'unsigned', approvalSignature: 'unsigned' }])(
+    'refuses malformed supplied authorization instead of publishing an artifact-only downgrade: %j', updateAuthorization => {
+      expect(() => buildLatestManifest({ version: '1.2.3', channel: 'stable', tag: 'desktop-v1.2.3',
+        pubDate: '2026-11-03T00:00:00Z', urlFor,
+        artifacts: [{ name: 'gui.AppImage', platformKey: 'linux-x86_64', signature: 'SIG',
+          updateAuthorization: updateAuthorization as never }],
+      })).toThrow();
+    });
+
   it('maps each signed artifact to a platform entry with url + signature', () => {
     const m = buildLatestManifest({
       version: '0.0.2',
