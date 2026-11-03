@@ -42,6 +42,13 @@ describe('shared updater signature verifier', () => {
     await expect(verifyTauriSignature(f.key, signature, () => f.message))
       .resolves.toMatchObject({ code: 1, valid: false, reason: expect.stringContaining('trusted comment') });
   });
+  it('supports both public-key algorithm markers accepted by the native Minisign library', async () => {
+    const f = fixture('ED');
+    const raw = Buffer.from(f.key.trim().split('\n').at(-1)!, 'base64');
+    raw.write('ED', 0, 'latin1');
+    await expect(verifyTauriSignature(raw.toString('base64'), f.signature, () => f.message))
+      .resolves.toMatchObject({ code: 0, valid: true });
+  });
   it('rejects malformed keys before reading and rejects a different key even with the same key id', async () => {
     const f = fixture('ED');
     const read = vi.fn(() => f.message);
@@ -74,7 +81,9 @@ function authorizationFixture() {
         const bytes = Buffer.from(payload);
         const message = algorithm === 'ED' ? createHash('blake2b512').update(bytes).digest() : bytes;
         const signature = sign(null, message, pair.privateKey);
-        return Buffer.from(`untrusted comment: update\n${Buffer.concat([Buffer.from(algorithm), keyId, signature]).toString('base64')}\n`).toString('base64');
+        const comment = 'timestamp:2 file:update-authorization';
+        const global = sign(null, Buffer.concat([signature, Buffer.from(comment)]), pair.privateKey).toString('base64');
+        return Buffer.from(`untrusted comment: update\n${Buffer.concat([Buffer.from(algorithm), keyId, signature]).toString('base64')}\ntrusted comment: ${comment}\n${global}\n`).toString('base64');
       } };
   };
   const signer = key('release', 'release-principal');
@@ -179,6 +188,18 @@ describe('exact independently approved update authorization', () => {
       JSON.stringify({ ...f.metadata, extra: 'unsigned semantic input' })]) {
       expect(await verifyTauriUpdateAuthorization(f.trust, f.envelope(altered), f.candidate, 2000))
         .toMatchObject({ code: 2, valid: false });
+    }
+  });
+
+  it.each(['signature', 'approvalSignature'] as const)('requires a native-compatible complete %s and authenticates its comment', async field => {
+    const f = authorizationFixture();
+    const envelope = f.envelope();
+    const signatureText = Buffer.from(envelope[field], 'base64').toString('utf8');
+    for (const changed of [signatureText.split('\n').slice(0, 2).join('\n') + '\n',
+      signatureText.replace('timestamp:2', 'timestamp:3')]) {
+      expect(await verifyTauriUpdateAuthorization(f.trust,
+        { ...envelope, [field]: Buffer.from(changed).toString('base64') }, f.candidate, 2000))
+        .toMatchObject({ valid: false });
     }
   });
 

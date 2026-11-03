@@ -16,7 +16,7 @@ function publicKeyBytes(publicKey) {
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const bytes = decode(lines.at(-1) || '');
   if (bytes.length !== 42) throw new Error(`pubkey block is ${bytes.length} bytes, expected 42`);
-  if (bytes.subarray(0, 2).toString('latin1') !== 'Ed') throw new Error('unknown public key algorithm');
+  if (!['Ed', 'ED'].includes(bytes.subarray(0, 2).toString('latin1'))) throw new Error('unknown public key algorithm');
   return bytes;
 }
 
@@ -121,6 +121,14 @@ export async function verifyTauriUpdateAuthorization(trust, envelope, expected, 
       throw new Error('invalid signed update envelope');
     }
     ({ payload, signature, approvalSignature } = envelope);
+    // Native minisign-verify authenticates the trusted comment too. The new
+    // authorization protocol requires that complete format on both signatures;
+    // legacy artifact-only signatures remain supported by verifyTauriSignature.
+    for (const signed of [signature, approvalSignature]) {
+      if (decode(signed).toString('utf8').trimEnd().split(/\r?\n/).length !== 4) {
+        throw new Error('complete minisign authorization signatures required');
+      }
+    }
     metadata = JSON.parse(payload);
     if (encodeTauriUpdateAuthorization(metadata) !== payload) throw new Error('noncanonical update payload');
     if (!dataRecord(expected, EXPECTED_UPDATE_FIELDS)) throw new Error('exact candidate inputs required');
