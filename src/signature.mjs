@@ -104,6 +104,26 @@ export function encodeTauriUpdateAuthorization(metadata) {
   return JSON.stringify(Object.fromEntries(UPDATE_FIELDS.map(key => [key, metadata[key]])));
 }
 
+/** Snapshot a canonical envelope without asserting signature or current-trust validity. */
+export function parseTauriUpdateEnvelope(envelope) {
+  if (!dataRecord(envelope, ['payload', 'signature', 'approvalSignature']) ||
+      typeof envelope.payload !== 'string' || envelope.payload.length > 16_384 ||
+      !['signature', 'approvalSignature'].every(key =>
+        typeof envelope[key] === 'string' && envelope[key].length > 0 && envelope[key].length <= 4096)) {
+    throw new Error('invalid signed update envelope');
+  }
+  const { payload, signature, approvalSignature } = envelope;
+  for (const signed of [signature, approvalSignature]) {
+    if (decode(signed).toString('utf8').trimEnd().split(/\r?\n/).length !== 4) {
+      throw new Error('complete minisign authorization signatures required');
+    }
+  }
+  if (encodeTauriUpdateAuthorization(JSON.parse(payload)) !== payload) {
+    throw new Error('noncanonical update payload');
+  }
+  return { payload, signature, approvalSignature };
+}
+
 /**
  * Verify exact reviewed update inputs under independently supplied CURRENT trust state.
  * This does not establish trust roots or advance rollback/freshness state: the installer
@@ -114,23 +134,8 @@ export async function verifyTauriUpdateAuthorization(trust, envelope, expected, 
   const refused = reason => ({ code: 1, valid: false, reason });
   let metadata, signer, approver, signerBytes, approverBytes, payload, signature, approvalSignature;
   try {
-    if (!dataRecord(envelope, ['payload', 'signature', 'approvalSignature']) ||
-        typeof envelope.payload !== 'string' || envelope.payload.length > 16_384 ||
-        !['signature', 'approvalSignature'].every(key =>
-          typeof envelope[key] === 'string' && envelope[key].length > 0 && envelope[key].length <= 4096)) {
-      throw new Error('invalid signed update envelope');
-    }
-    ({ payload, signature, approvalSignature } = envelope);
-    // Native minisign-verify authenticates the trusted comment too. The new
-    // authorization protocol requires that complete format on both signatures;
-    // legacy artifact-only signatures remain supported by verifyTauriSignature.
-    for (const signed of [signature, approvalSignature]) {
-      if (decode(signed).toString('utf8').trimEnd().split(/\r?\n/).length !== 4) {
-        throw new Error('complete minisign authorization signatures required');
-      }
-    }
+    ({ payload, signature, approvalSignature } = parseTauriUpdateEnvelope(envelope));
     metadata = JSON.parse(payload);
-    if (encodeTauriUpdateAuthorization(metadata) !== payload) throw new Error('noncanonical update payload');
     if (!dataRecord(expected, EXPECTED_UPDATE_FIELDS)) throw new Error('exact candidate inputs required');
     for (const field of EXPECTED_UPDATE_FIELDS) {
       if (metadata[field] !== expected[field]) return refused(`candidate ${field} differs from reviewed update`);

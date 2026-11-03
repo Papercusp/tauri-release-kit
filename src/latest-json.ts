@@ -1,11 +1,13 @@
 /** Build the auto-updater `latest.json` manifest. Pure. */
 import type { Channel, LatestManifest, PlatformEntry, PlatformKey } from './types.js';
+import { parseTauriUpdateEnvelope, type TauriUpdateEnvelope } from './signature.mjs';
 
 /** An artifact whose `.sig` content has already been read in (keeps this pure). */
 export interface ManifestArtifact {
   name: string;
   platformKey: PlatformKey;
   signature: string;
+  updateAuthorization?: TauriUpdateEnvelope;
 }
 
 /**
@@ -47,7 +49,12 @@ export function buildLatestManifest(opts: {
           `updater would silently report "up to date"`,
       );
     }
-    platforms[a.platformKey] = { signature: a.signature, url };
+    platforms[a.platformKey] = {
+      signature: a.signature, url,
+      ...(a.updateAuthorization === undefined ? {} : {
+        updateAuthorization: parseTauriUpdateEnvelope(a.updateAuthorization),
+      }),
+    };
   }
   const label = opts.appName ?? 'Desktop';
   return {

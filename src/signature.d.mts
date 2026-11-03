@@ -54,6 +54,8 @@ export interface TauriUpdateEnvelope {
   signature: string;
   approvalSignature: string;
 }
+/** Structural/canonical validation only; does not authenticate or authorize activation. */
+export function parseTauriUpdateEnvelope(envelope: unknown): TauriUpdateEnvelope;
 export function encodeTauriUpdateAuthorization(metadata: TauriUpdateAuthorization): string;
 export function verifyTauriUpdateAuthorization(
   trust: TauriUpdateTrust,

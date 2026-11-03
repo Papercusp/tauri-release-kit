@@ -47,7 +47,9 @@ export async function buildAndSignTargets(
     } else {
       ports.log.warn(`no signature for ${a.name} (${a.platformKey})`);
     }
-    signed.push({ name: a.name, platformKey: a.platformKey, signature });
+    signed.push({ name: a.name, platformKey: a.platformKey, signature,
+      ...(a.updateAuthorization === undefined ? {} : { updateAuthorization: a.updateAuthorization }),
+    });
   }
   return { artifacts, signed };
 }

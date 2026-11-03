@@ -1,3 +1,5 @@
+import type { TauriUpdateEnvelope } from './signature.mjs';
+
 /**
  * @papercusp/tauri-release-kit — type surface (the seam contract).
  *
@@ -176,6 +178,8 @@ export interface Artifact {
   platformKey?: PlatformKey;
   /** Path to the detached `.sig`, if signed. */
   sigPath?: string;
+  /** Independently approved envelope; native activation must verify under current trust. */
+  updateAuthorization?: TauriUpdateEnvelope;
 }
 
 /** A build target driver — mirrors @papercusp/deployment-driver's shape. */
@@ -190,6 +194,7 @@ export interface TargetDriver {
 export interface PlatformEntry {
   signature: string;
   url: string;
+  updateAuthorization?: TauriUpdateEnvelope;
 }
 
 export interface LatestManifest {
