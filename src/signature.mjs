@@ -69,17 +69,32 @@ export async function verifyTauriSignature(publicKey, signature, readMessage) {
 
 const UPDATE_FIELDS = [
   'schema', 'artifactSha256', 'policySha256', 'configurationSha256', 'sourceRevision',
-  'version', 'product', 'platform', 'authorId', 'approverId', 'approverEpoch',
+  'version', 'product', 'platform', 'authorIds', 'approverId', 'approverEpoch',
   'signerId', 'signerEpoch', 'rootEpoch', 'rollbackCounter', 'issuedAt', 'expiresAt',
 ];
 const EXPECTED_UPDATE_FIELDS = [
   'artifactSha256', 'policySha256', 'configurationSha256', 'sourceRevision',
-  'version', 'product', 'platform', 'authorId', 'rollbackCounter',
+  'version', 'product', 'platform', 'authorIds', 'rollbackCounter',
 ];
 const SHA256 = /^[0-9a-f]{64}$/;
 const integer = value => Number.isSafeInteger(value) && value >= 0;
 const label = value => typeof value === 'string' && value.length > 0 && value.length <= 200 &&
   value.trim() === value && !/[\s\x00-\x1f\x7f]/.test(value);
+
+// A signed author set has exactly one representation. Check array data properties
+// before reading them so sparse/accessor inputs cannot hide an applicable author.
+function authors(value) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype ||
+      value.length === 0 || value.length > 64 || Reflect.ownKeys(value).length !== value.length + 1) return false;
+  let previous;
+  for (let i = 0; i < value.length; i++) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(i));
+    if (!descriptor || !('value' in descriptor) || !label(descriptor.value) ||
+        (i > 0 && !(previous < descriptor.value))) return false;
+    previous = descriptor.value;
+  }
+  return true;
+}
 
 function dataRecord(value, fields) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -92,11 +107,12 @@ function dataRecord(value, fields) {
 
 /** One byte representation for both the release signature and the independent approval. */
 export function encodeTauriUpdateAuthorization(metadata) {
-  if (!dataRecord(metadata, UPDATE_FIELDS) || metadata.schema !== 'tauri-update-authorization-v1' ||
+  if (!dataRecord(metadata, UPDATE_FIELDS) || metadata.schema !== 'tauri-update-authorization-v2' ||
       !['artifactSha256', 'policySha256', 'configurationSha256'].every(key =>
         typeof metadata[key] === 'string' && SHA256.test(metadata[key])) ||
       !/^[0-9a-f]{40}$/.test(metadata.sourceRevision) ||
-      !['version', 'product', 'platform', 'authorId', 'approverId', 'signerId'].every(key => label(metadata[key])) ||
+      !['version', 'product', 'platform', 'approverId', 'signerId'].every(key => label(metadata[key])) ||
+      !authors(metadata.authorIds) ||
       !['approverEpoch', 'signerEpoch', 'rootEpoch', 'rollbackCounter', 'issuedAt', 'expiresAt'].every(key => integer(metadata[key])) ||
       metadata.expiresAt <= metadata.issuedAt) {
     throw new Error('invalid update authorization metadata');
@@ -136,9 +152,12 @@ export async function verifyTauriUpdateAuthorization(trust, envelope, expected, 
   try {
     ({ payload, signature, approvalSignature } = parseTauriUpdateEnvelope(envelope));
     metadata = JSON.parse(payload);
-    if (!dataRecord(expected, EXPECTED_UPDATE_FIELDS)) throw new Error('exact candidate inputs required');
+    if (!dataRecord(expected, EXPECTED_UPDATE_FIELDS) || !authors(expected.authorIds)) throw new Error('exact candidate inputs required');
     for (const field of EXPECTED_UPDATE_FIELDS) {
-      if (metadata[field] !== expected[field]) return refused(`candidate ${field} differs from reviewed update`);
+      const matches = field === 'authorIds'
+        ? JSON.stringify(metadata.authorIds) === JSON.stringify(expected.authorIds)
+        : metadata[field] === expected[field];
+      if (!matches) return refused(`candidate ${field} differs from reviewed update`);
     }
     if (!trust || !integer(now) || !integer(trust.rootEpoch) || !integer(trust.minRollbackCounter) ||
         !integer(trust.minIssuedAt) || !integer(trust.maxMetadataAgeMs) || trust.maxMetadataAgeMs === 0 ||
@@ -165,7 +184,7 @@ export async function verifyTauriUpdateAuthorization(trust, envelope, expected, 
     approver = selectKey(trust.approvers, metadata.approverId, metadata.approverEpoch);
     signerBytes = publicKeyBytes(signer.publicKey);
     approverBytes = publicKeyBytes(approver.publicKey);
-    if (approver.principalId === metadata.authorId || approver.principalId === signer.principalId ||
+    if (metadata.authorIds.includes(approver.principalId) || approver.principalId === signer.principalId ||
         signerBytes.subarray(10).equals(approverBytes.subarray(10))) {
       return refused('update approval is not independent of its author and release signer');
     }

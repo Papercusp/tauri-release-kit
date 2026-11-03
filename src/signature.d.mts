@@ -13,7 +13,7 @@ export function verifyTauriSignature(
 ): Promise<TauriSignatureResult>;
 
 export interface TauriUpdateAuthorization {
-  schema: 'tauri-update-authorization-v1';
+  schema: 'tauri-update-authorization-v2';
   artifactSha256: string;
   policySha256: string;
   configurationSha256: string;
@@ -21,7 +21,8 @@ export interface TauriUpdateAuthorization {
   version: string;
   product: string;
   platform: string;
-  authorId: string;
+  /** All applicable authenticated source authors, strictly sorted by UTF-16 units; 1–64 distinct principals. */
+  authorIds: readonly string[];
   approverId: string;
   approverEpoch: number;
   signerId: string;
@@ -48,7 +49,7 @@ export interface TauriUpdateTrust {
 }
 export type TauriUpdateCandidate = Pick<TauriUpdateAuthorization,
   'artifactSha256' | 'policySha256' | 'configurationSha256' | 'sourceRevision' |
-  'version' | 'product' | 'platform' | 'authorId' | 'rollbackCounter'>;
+  'version' | 'product' | 'platform' | 'authorIds' | 'rollbackCounter'>;
 export interface TauriUpdateEnvelope {
   payload: string;
   signature: string;

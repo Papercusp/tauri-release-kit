@@ -90,9 +90,9 @@ function authorizationFixture() {
   const signer = key('release', 'release-principal');
   const approver = key('reviewer', 'reviewer-principal');
   const metadata: TauriUpdateAuthorization = {
-    schema: 'tauri-update-authorization-v1', artifactSha256: 'a'.repeat(64), policySha256: 'b'.repeat(64),
+    schema: 'tauri-update-authorization-v2', artifactSha256: 'a'.repeat(64), policySha256: 'b'.repeat(64),
     configurationSha256: 'c'.repeat(64), sourceRevision: 'd'.repeat(40), version: '1.2.3',
-    product: 'gui', platform: 'linux-x86_64', authorId: 'author-principal',
+    product: 'gui', platform: 'linux-x86_64', authorIds: ['author-principal', 'coauthor-principal'],
     approverId: approver.id, approverEpoch: approver.epoch, signerId: signer.id, signerEpoch: signer.epoch,
     rootEpoch: 3, rollbackCounter: 7, issuedAt: 1000, expiresAt: 3000,
   };
@@ -100,7 +100,7 @@ function authorizationFixture() {
     maxMetadataAgeMs: 1500, signers: [signer], approvers: [approver] };
   const candidate: TauriUpdateCandidate = Object.fromEntries([
     'artifactSha256', 'policySha256', 'configurationSha256', 'sourceRevision',
-    'version', 'product', 'platform', 'authorId', 'rollbackCounter',
+    'version', 'product', 'platform', 'authorIds', 'rollbackCounter',
   ].map(field => [field, metadata[field as keyof TauriUpdateAuthorization]])) as unknown as TauriUpdateCandidate;
   const envelope = (payload = encodeTauriUpdateAuthorization(metadata)) =>
     ({ payload, signature: signer.sign(payload), approvalSignature: approver.sign(payload) });
@@ -141,7 +141,7 @@ describe('exact independently approved update authorization', () => {
     ['artifactSha256', 'e'.repeat(64)], ['policySha256', 'e'.repeat(64)],
     ['configurationSha256', 'e'.repeat(64)], ['sourceRevision', 'e'.repeat(40)],
     ['version', '1.2.2'], ['product', 'server'], ['platform', 'windows-x86_64'],
-    ['authorId', 'another-author'], ['rollbackCounter', 6],
+    ['authorIds', ['another-author']], ['rollbackCounter', 6],
   ] as const)('refuses an otherwise correctly signed update for different actual %s', async (field, value) => {
     const f = authorizationFixture();
     const result = await verifyTauriUpdateAuthorization(f.trust, f.envelope(), { ...f.candidate, [field]: value }, 2000);
@@ -186,7 +186,7 @@ describe('exact independently approved update authorization', () => {
     expect(await verifyTauriUpdateAuthorization(f.trust, f.envelope(), f.candidate, now)).toMatchObject({ valid: false });
   });
 
-  it.each(['author-principal', 'release-principal'])('refuses approval by %s under a different key', async principalId => {
+  it.each(['author-principal', 'coauthor-principal', 'release-principal'])('refuses approval by %s under a different key', async principalId => {
     const f = authorizationFixture();
     f.approver.principalId = principalId;
     expect(await verifyTauriUpdateAuthorization(f.trust, f.envelope(), f.candidate, 2000))
@@ -200,6 +200,50 @@ describe('exact independently approved update authorization', () => {
     f.approver.publicKey = Buffer.from(`untrusted comment: minisign public key\n${raw.toString('base64')}\n`).toString('base64');
     expect(await verifyTauriUpdateAuthorization(f.trust, f.envelope(), f.candidate, 2000))
       .toMatchObject({ valid: false, reason: expect.stringContaining('not independent') });
+  });
+
+  it('binds the entire author set by value and authenticates every member', async () => {
+    const f = authorizationFixture();
+    const original = f.envelope();
+    expect(await verifyTauriUpdateAuthorization(f.trust, original,
+      { ...f.candidate, authorIds: [...f.candidate.authorIds] }, 2000)).toMatchObject({ valid: true });
+    for (const authorIds of [['author-principal'], ['author-principal', 'other-principal']]) {
+      expect(await verifyTauriUpdateAuthorization(f.trust, original, { ...f.candidate, authorIds }, 2000))
+        .toMatchObject({ valid: false, reason: expect.stringContaining('authorIds') });
+    }
+    f.metadata.authorIds = ['author-principal', 'other-principal'];
+    const changed = f.envelope();
+    for (const field of ['signature', 'approvalSignature'] as const) {
+      expect(await verifyTauriUpdateAuthorization(f.trust, { ...changed, [field]: original[field] },
+        { ...f.candidate, authorIds: f.metadata.authorIds }, 2000))
+        .toMatchObject({ valid: false, reason: expect.stringContaining('signature') });
+    }
+  });
+
+  it('refuses absent, ambiguous and legacy author sets even when both signatures are authentic', async () => {
+    const f = authorizationFixture();
+    const { authorIds: _, ...withoutAuthors } = f.metadata;
+    const invalid = [undefined, null, [], 'author-principal', ['a', 'a'], ['z', 'a'], ['a', 'bad author'],
+      Array.from({ length: 65 }, (_, i) => `a${String(i).padStart(2, '0')}`)];
+    for (const authorIds of invalid) {
+      const payload = JSON.stringify({ ...f.metadata, authorIds });
+      expect(await verifyTauriUpdateAuthorization(f.trust, f.envelope(payload), f.candidate, 2000))
+        .toMatchObject({ valid: false });
+    }
+    const legacy = JSON.stringify({ ...withoutAuthors, schema: 'tauri-update-authorization-v1', authorId: 'author-principal' });
+    expect(await verifyTauriUpdateAuthorization(f.trust, f.envelope(legacy), f.candidate, 2000))
+      .toMatchObject({ valid: false });
+  });
+
+  it('rejects sparse or accessor author arrays without evaluating accessors', () => {
+    const f = authorizationFixture();
+    const getter = vi.fn(() => 'coauthor-principal');
+    const accessor = ['author-principal', 'coauthor-principal'];
+    Object.defineProperty(accessor, '1', { get: getter });
+    for (const authorIds of [accessor, new Array<string>(1), Object.assign(['author-principal'], { extra: true })]) {
+      expect(() => encodeTauriUpdateAuthorization({ ...f.metadata, authorIds })).toThrow('invalid update');
+    }
+    expect(getter).not.toHaveBeenCalled();
   });
 
   it('refuses noncanonical, duplicate-field and extra-field metadata even with authentic signatures', async () => {
