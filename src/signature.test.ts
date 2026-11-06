@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { encodeTauriUpdateAuthorization, verifyTauriSignature, verifyTauriUpdateAuthorization,
+import { encodeTauriUpdateAuthorization, parseTauriUpdateCandidate, verifyTauriSignature, verifyTauriUpdateAuthorization,
   type TauriUpdateAuthorization, type TauriUpdateCandidate, type TauriUpdateTrust } from './signature.mjs';
 import { buildLatestManifest, mergeLatestManifest } from './latest-json.js';
 
@@ -108,6 +108,37 @@ function authorizationFixture() {
 }
 
 describe('exact independently approved update authorization', () => {
+  it('snapshots the complete candidate author set without accepting accessor authority', async () => {
+    const f = authorizationFixture();
+    const candidate = parseTauriUpdateCandidate(f.candidate);
+    expect(candidate).toEqual(f.candidate);
+    expect(Object.isFrozen(candidate)).toBe(true);
+    expect(Object.isFrozen(candidate.authorIds)).toBe(true);
+    (f.candidate.authorIds as string[]).pop();
+    f.candidate.sourceRevision = 'f'.repeat(40);
+    expect(candidate.authorIds).toEqual(['author-principal', 'coauthor-principal']);
+    expect(candidate.sourceRevision).toBe('d'.repeat(40));
+    await expect(verifyTauriUpdateAuthorization(f.trust, f.envelope(), candidate, 2000)).resolves.toMatchObject({ valid: true });
+    const getter = vi.fn(() => candidate.authorIds);
+    const accessor = { ...candidate };
+    Object.defineProperty(accessor, 'authorIds', { get: getter });
+    expect(() => parseTauriUpdateCandidate(accessor)).toThrow(/exact candidate/);
+    expect(getter).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { authorIds: [] }, { authorIds: ['coauthor-principal', 'author-principal'] },
+    { authorIds: ['author-principal', 'author-principal'] }, { authorIds: new Array(1) },
+    { authorIds: ['bad author'] }, { authorIds: Array.from({ length: 65 }, (_, i) => `author-${String(i).padStart(2, '0')}`) },
+    { artifactSha256: 'a'.repeat(63) }, { policySha256: 'B'.repeat(64) },
+    { configurationSha256: null }, { sourceRevision: { toString: () => 'd'.repeat(40) } },
+    { version: '' }, { product: 'bad product' }, { platform: '' },
+    { rollbackCounter: -1 }, { rollbackCounter: Number.MAX_SAFE_INTEGER + 1 }, { extra: true },
+  ])('refuses malformed or incomplete candidate inputs %#', patch => {
+    const f = authorizationFixture();
+    expect(() => parseTauriUpdateCandidate({ ...f.candidate, ...patch })).toThrow(/exact candidate/);
+  });
+
   it('preserves authentic approval bytes through manifest construction, incremental merge and JSON transport', async () => {
     const f = authorizationFixture();
     const envelope = f.envelope();

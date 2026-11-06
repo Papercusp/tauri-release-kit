@@ -55,6 +55,8 @@ export interface TauriUpdateEnvelope {
   signature: string;
   approvalSignature: string;
 }
+/** Immutable structural snapshot only; source authentication/completeness belong to the protected producer. */
+export function parseTauriUpdateCandidate(candidate: unknown): Readonly<TauriUpdateCandidate>;
 /** Structural/canonical validation only; does not authenticate or authorize activation. */
 export function parseTauriUpdateEnvelope(envelope: unknown): TauriUpdateEnvelope;
 export function encodeTauriUpdateAuthorization(metadata: TauriUpdateAuthorization): string;

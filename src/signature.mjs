@@ -105,15 +105,30 @@ function dataRecord(value, fields) {
     Object.hasOwn(value, field) && 'value' in Object.getOwnPropertyDescriptor(value, field));
 }
 
+function candidateInputs(value) {
+  return ['artifactSha256', 'policySha256', 'configurationSha256'].every(key =>
+    typeof value[key] === 'string' && SHA256.test(value[key])) &&
+    typeof value.sourceRevision === 'string' && /^[0-9a-f]{40}$/.test(value.sourceRevision) &&
+    ['version', 'product', 'platform'].every(key => label(value[key])) &&
+    authors(value.authorIds) && integer(value.rollbackCounter);
+}
+
+/** Snapshot exact host-produced inputs, including every declared author.
+ * Structural validation is not authentication or proof of source completeness.
+ */
+export function parseTauriUpdateCandidate(candidate) {
+  if (!dataRecord(candidate, EXPECTED_UPDATE_FIELDS) || !candidateInputs(candidate)) {
+    throw new Error('exact candidate inputs required');
+  }
+  return Object.freeze(Object.fromEntries(EXPECTED_UPDATE_FIELDS.map(field =>
+    [field, field === 'authorIds' ? Object.freeze([...candidate.authorIds]) : candidate[field]])));
+}
+
 /** One byte representation for both the release signature and the independent approval. */
 export function encodeTauriUpdateAuthorization(metadata) {
   if (!dataRecord(metadata, UPDATE_FIELDS) || metadata.schema !== 'tauri-update-authorization-v2' ||
-      !['artifactSha256', 'policySha256', 'configurationSha256'].every(key =>
-        typeof metadata[key] === 'string' && SHA256.test(metadata[key])) ||
-      !/^[0-9a-f]{40}$/.test(metadata.sourceRevision) ||
-      !['version', 'product', 'platform', 'approverId', 'signerId'].every(key => label(metadata[key])) ||
-      !authors(metadata.authorIds) ||
-      !['approverEpoch', 'signerEpoch', 'rootEpoch', 'rollbackCounter', 'issuedAt', 'expiresAt'].every(key => integer(metadata[key])) ||
+      !candidateInputs(metadata) || !['approverId', 'signerId'].every(key => label(metadata[key])) ||
+      !['approverEpoch', 'signerEpoch', 'rootEpoch', 'issuedAt', 'expiresAt'].every(key => integer(metadata[key])) ||
       metadata.expiresAt <= metadata.issuedAt) {
     throw new Error('invalid update authorization metadata');
   }
@@ -152,7 +167,7 @@ export async function verifyTauriUpdateAuthorization(trust, envelope, expected, 
   try {
     ({ payload, signature, approvalSignature } = parseTauriUpdateEnvelope(envelope));
     metadata = JSON.parse(payload);
-    if (!dataRecord(expected, EXPECTED_UPDATE_FIELDS) || !authors(expected.authorIds)) throw new Error('exact candidate inputs required');
+    expected = parseTauriUpdateCandidate(expected);
     for (const field of EXPECTED_UPDATE_FIELDS) {
       const matches = field === 'authorIds'
         ? JSON.stringify(metadata.authorIds) === JSON.stringify(expected.authorIds)
