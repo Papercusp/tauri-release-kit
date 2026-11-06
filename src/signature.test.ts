@@ -110,6 +110,7 @@ function authorizationFixture() {
 describe('exact independently approved update authorization', () => {
   it('snapshots the complete candidate author set without accepting accessor authority', async () => {
     const f = authorizationFixture();
+    const envelope = f.envelope();
     const candidate = parseTauriUpdateCandidate(f.candidate);
     expect(candidate).toEqual(f.candidate);
     expect(Object.isFrozen(candidate)).toBe(true);
@@ -118,7 +119,7 @@ describe('exact independently approved update authorization', () => {
     f.candidate.sourceRevision = 'f'.repeat(40);
     expect(candidate.authorIds).toEqual(['author-principal', 'coauthor-principal']);
     expect(candidate.sourceRevision).toBe('d'.repeat(40));
-    await expect(verifyTauriUpdateAuthorization(f.trust, f.envelope(), candidate, 2000)).resolves.toMatchObject({ valid: true });
+    await expect(verifyTauriUpdateAuthorization(f.trust, envelope, candidate, 2000)).resolves.toMatchObject({ valid: true });
     const getter = vi.fn(() => candidate.authorIds);
     const accessor = { ...candidate };
     Object.defineProperty(accessor, 'authorIds', { get: getter });
