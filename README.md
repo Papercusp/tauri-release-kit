@@ -93,3 +93,45 @@ host-specific, same split as the build-target driver registry).
 
 Zero runtime deps — borrowable standalone (`http.ts` uses the platform global
 `fetch`, not a package).
+
+## Independent authorization and source-author enrollment
+
+The existing `signature` export defines `tauri-update-authorization-v2`. Its
+`signers` and `approvers` are public-key mappings in the administrator-controlled
+managed policy, not Git author strings. Provision that policy through the
+existing trusted administrator/MDM channel. Before adding a mapping, the
+administrator authenticates the person or upstream vendor through its established
+identity channel and verifies control of the supplied public key. Record the
+identity evidence and exact policy digest in that channel's approval record.
+Keep private keys outside agent-readable files, processes and sockets. Generating
+a key locally or assigning a principal label does not establish authorship.
+
+An independent reviewer must attest the complete applicable author set and exact
+source/vendor inputs. For handler inputs, each listed author signs the same
+candidate with the full author set; the producer derives each signing principal
+from current protected policy. All authors need their own receipt, and the
+reviewer cannot be any listed author or the release signer. Missing upstream
+authority or independent review leaves issuance unqualified.
+
+The desktop's existing public signature CLI prepares and assembles receipts:
+
+```sh
+node papercusp-desktop/bin/verify-tauri-signature.mjs authorization-request metadata.json candidate.json > request.json
+# Each authority independently reviews these exact bytes and signs request.json
+# using its protected signing environment. Return the complete four-line minisign
+# signatures encoded as base64 (the existing Tauri .sig transport format).
+node papercusp-desktop/bin/verify-tauri-signature.mjs authorization-assemble trust.json candidate.json request.json release.sig approval.sig > envelope.json
+```
+
+`metadata.json` contains the canonical protocol fields including the selected
+enrolled key ids/epochs, root epoch, freshness and rollback values.
+`candidate.json` contains the independently measured candidate fields accepted by
+`parseTauriUpdateCandidate`; `trust.json` is the public `updateAuthorization`
+object exported from the administrator's current policy. Request output has no
+trailing newline: both authorities sign precisely that file. Assembly emits an
+envelope only after both signatures, independence, candidate identity and current
+snapshot's epoch/floor/freshness checks pass. It reads no private key and performs
+no policy write, enrollment, signing, installation or publication. A caller-made
+trust snapshot cannot authorize activation: the installed verifier and handler
+producer still re-read protected current trust. Transport the resulting receipts
+through the existing manifest companions or handler `--build-inputs` path.

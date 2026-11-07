@@ -1,6 +1,6 @@
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -106,6 +106,87 @@ function authorizationFixture() {
     ({ payload, signature: signer.sign(payload), approvalSignature: approver.sign(payload) });
   return { signer, approver, metadata, trust, candidate, envelope };
 }
+
+describe('offline independent authorization ceremony', () => {
+  function ceremony() {
+    const f = authorizationFixture();
+    const now = Date.now();
+    f.metadata.issuedAt = now - 1000; f.metadata.expiresAt = now + 60_000;
+    f.trust.maxMetadataAgeMs = 120_000;
+    const root = mkdtempSync(join(tmpdir(), 'release-authorization-')); roots.push(root);
+    const file = (name: string, value: unknown) => {
+      const path = join(root, name);
+      writeFileSync(path, typeof value === 'string' ? value : JSON.stringify(value));
+      return path;
+    };
+    const cli = fileURLToPath(new URL('../../../../papercusp-desktop/bin/verify-tauri-signature.mjs', import.meta.url));
+    const run = (...args: string[]) => spawnSync(process.execPath, [cli, ...args],
+      { encoding: 'utf8', env: {}, timeout: 10_000 });
+    const candidate = file('candidate.json', f.candidate);
+    const metadata = file('metadata.json', f.metadata);
+    const payload = encodeTauriUpdateAuthorization(f.metadata);
+    const request = file('request.json', payload);
+    const release = file('release.sig', f.signer.sign(payload));
+    const approval = file('approval.sig', f.approver.sign(payload));
+    const assemble = () => run('authorization-assemble', file('trust.json', f.trust), candidate, request, release, approval);
+    return { ...f, file, run, candidatePath: candidate, metadataPath: metadata, payload, request, release, approval, assemble };
+  }
+
+  it('emits exact review bytes and assembles authentic independent signatures without any private-key input', async () => {
+    const f = ceremony();
+    const request = f.run('authorization-request', f.metadataPath, f.candidatePath);
+    expect(request.status, request.stderr).toBe(0);
+    expect(request.stdout).toBe(f.payload); // A trailing newline would invalidate both signatures.
+    const result = f.assemble();
+    expect(result.status, result.stderr).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(await verifyTauriUpdateAuthorization(f.trust, envelope, f.candidate, Date.now())).toMatchObject({ valid: true });
+    expect(readFileSync(f.request, 'utf8')).toBe(f.payload);
+  });
+
+  it.each(['sourceRevision', 'artifactSha256', 'authorIds'] as const)('refuses a signing request for a different actual %s', field => {
+    const f = ceremony();
+    const metadata = { ...f.metadata, [field]: field === 'authorIds' ? ['substituted-author'] : 'e'.repeat(field === 'sourceRevision' ? 40 : 64) };
+    const result = f.run('authorization-request', f.file('other.json', metadata), f.candidatePath);
+    expect(result.status).toBe(2); expect(result.stdout).toBe(''); expect(result.stderr).toContain(field);
+  });
+
+  it('preserves a large complete-author signing request through piped stdout', () => {
+    const f = ceremony();
+    const authorIds = Array.from({ length: 64 }, (_, i) => `author-${String(i).padStart(2, '0')}-${'x'.repeat(180)}`);
+    const metadata = { ...f.metadata, authorIds };
+    const payload = encodeTauriUpdateAuthorization(metadata);
+    expect(Buffer.byteLength(payload)).toBeGreaterThan(8192);
+    const result = f.run('authorization-request', f.file('large.json', metadata),
+      f.file('large-candidate.json', { ...f.candidate, authorIds }));
+    expect(result.status, result.stderr).toBe(0); expect(result.stdout).toBe(payload);
+  });
+
+  it.each(['self-review', 'revoked', 'changed-revision', 'changed-request', 'wrong-signature', 'expired', 'rollback', 'root-epoch'] as const)
+    ('emits no envelope for %s', change => {
+      const f = ceremony();
+      if (change === 'self-review') f.trust.approvers[0]!.principalId = f.candidate.authorIds[0]!;
+      if (change === 'revoked') f.trust.approvers[0]!.revoked = true;
+      if (change === 'changed-revision') f.file('candidate.json', { ...f.candidate, sourceRevision: 'e'.repeat(40) });
+      if (change === 'changed-request') f.file('request.json', encodeTauriUpdateAuthorization({ ...f.metadata, expiresAt: f.metadata.expiresAt + 1 }));
+      if (change === 'wrong-signature') f.file('approval.sig', f.signer.sign(f.payload));
+      if (change === 'expired') f.file('request.json', encodeTauriUpdateAuthorization({ ...f.metadata, issuedAt: 1, expiresAt: 2 }));
+      if (change === 'rollback') f.trust.minRollbackCounter = f.metadata.rollbackCounter + 1;
+      if (change === 'root-epoch') f.trust.rootEpoch++;
+      const result = f.assemble();
+      expect(result.status, result.stderr).not.toBe(0); expect(result.stdout).toBe('');
+    });
+
+  it('rejects oversized inputs and unsupported arguments before producing review bytes', () => {
+    const f = ceremony();
+    f.file('metadata.json', ' '.repeat(16_385));
+    const oversized = f.run('authorization-request', f.metadataPath, f.candidatePath);
+    expect(oversized.status).toBe(2); expect(oversized.stdout).toBe('');
+    expect(oversized.stderr).toContain('size or type');
+    const extra = f.run('authorization-request', f.metadataPath, f.candidatePath, '--private-key=forbidden');
+    expect(extra.status).toBe(2); expect(extra.stdout).toBe(''); expect(extra.stderr).toContain('usage');
+  });
+});
 
 describe('exact independently approved update authorization', () => {
   it('snapshots the complete candidate author set without accepting accessor authority', async () => {
